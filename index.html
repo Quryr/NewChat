@@ -276,15 +276,13 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
 
 <!-- ═══ FIREBASE SDK ═══ -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script>
-// ╔══════════════════════════════════════════════════════╗
-// ║  FIREBASE CONFIG — Вставьте сюда свои ключи!        ║
-// ║  Firebase Console → Project Settings → Web App      ║
-// ║  Firestore Rules: allow read, write: if true;       ║
-// ╚══════════════════════════════════════════════════════╝
-const firebaseConfig = {
+// Умный выбор конфига (Превью Canvas vs Твой сервер)
+const isCanvas = typeof __firebase_config !== 'undefined';
+const fbConfig = isCanvas ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyCDrk4TEP8u8U03tUzVY--67ZS8RVCblGQ",
   authDomain: "newchat-9a7e6.firebaseapp.com",
   projectId: "newchat-9a7e6",
@@ -293,15 +291,29 @@ const firebaseConfig = {
   appId: "1:22906415162:web:97f2fb81bcf38ec0996d03",
   measurementId: "G-WNSMWYL6T9"
 };
+const envAppId = typeof __app_id !== 'undefined' ? __app_id : 'exam-prep-app';
 
 // ── ИНИЦИАЛИЗАЦИЯ ──
-let db;
+let db, auth;
 try {
-  firebase.initializeApp(firebaseConfig);
+  firebase.initializeApp(fbConfig);
   db = firebase.firestore();
+  auth = firebase.auth();
   db.enablePersistence().catch(() => {});
 } catch(e) {
   console.error('Firebase init error:', e);
+}
+
+// Умные роуты (позволяют работать в Canvas, но сохраняют твои старые чаты на твоем сервере)
+function getPagesRef() {
+  return isCanvas 
+    ? db.collection('artifacts').doc(envAppId).collection('public').doc('data').collection('pages')
+    : db.collection('pages');
+}
+function getMessagesRef(pageId) {
+  return isCanvas
+    ? getPagesRef().doc(pageId).collection('messages')
+    : db.collection('pages').doc(pageId).collection('messages');
 }
 
 // ── СОСТОЯНИЕ ПРИЛОЖЕНИЯ ──
@@ -403,7 +415,6 @@ function compressImage(file, maxBytes = 850000) {
           q -= 0.08;
         } while (result.length > maxBytes && q > 0.1);
         if (result.length > maxBytes * 1.2) {
-          // ещё уменьшаем
           const scale = 0.6;
           cv.width = w * scale; cv.height = h * scale;
           cv.getContext('2d').drawImage(img, 0, 0, w * scale, h * scale);
@@ -438,14 +449,20 @@ function compressAvatar(file) {
   });
 }
 
+function getTs(obj) {
+  if (!obj.createdAt) return Date.now(); // Для локальных сообщений, ожидающих отправки
+  if (obj.createdAt.toMillis) return obj.createdAt.toMillis();
+  return new Date(obj.createdAt).getTime();
+}
+
 function fmtTime(date) {
-  if (!date) return '';
+  if (!date) return 'Только что';
   const d = date instanceof Date ? date : date.toDate?.() || new Date(date);
   return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDate(date) {
-  if (!date) return '';
+  if (!date) return 'Сегодня';
   const d = date instanceof Date ? date : date.toDate?.() || new Date(date);
   const now = new Date();
   const yest = new Date(now); yest.setDate(yest.getDate() - 1);
@@ -512,14 +529,15 @@ profSurname.addEventListener('input', () => {
   }
 });
 
-profSave.addEventListener('click', () => {
+profSave.addEventListener('click', async () => {
   const name = (profName.value.trim() + ' ' + profSurname.value.trim()).trim();
   if (!name) { profName.focus(); return; }
   saveProfile(name, tempAvatar);
   profileOverlay.classList.remove('show');
   showProfileUI();
   app.style.display = 'flex';
-  initFirestore();
+  
+  await authFirebaseAndInit();
 });
 
 // ════════════════════════════════════════
@@ -540,16 +558,33 @@ themeBtn.addEventListener('click', () => {
 });
 
 // ════════════════════════════════════════
-// СТРАНИЦЫ (PAGES)
+// FIREBASE AUTH & FIRESTORE
 // ════════════════════════════════════════
+async function authFirebaseAndInit() {
+  if (!auth) return;
+  try {
+    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+      await auth.signInWithCustomToken(__initial_auth_token);
+    } else {
+      await auth.signInAnonymously();
+    }
+    initFirestore();
+  } catch(e) {
+    console.error('Auth error', e);
+  }
+}
+
 function initFirestore() {
   if (!db) return;
-  // Слушаем список страниц
-  db.collection('pages').orderBy('createdAt', 'asc').onSnapshot(snap => {
+  // Слушаем список страниц (сортировка в памяти для безопасности)
+  getPagesRef().onSnapshot(snap => {
     allPages = [];
     snap.forEach(doc => {
       allPages.push({ id: doc.id, ...doc.data() });
     });
+    
+    // Сортировка по времени создания
+    allPages.sort((a, b) => getTs(a) - getTs(b));
     renderPages(allPages);
   }, err => console.error('Pages listener error:', err));
 }
@@ -564,7 +599,7 @@ function renderPages(pages) {
     div.className = 'page-item' + (currentPageId === p.id ? ' active' : '');
     const color = getColor(p.name);
     const letter = (p.name[0] || '?').toUpperCase();
-    const dateStr = p.createdAt ? fmtDate(p.createdAt) : '';
+    const dateStr = p.createdAt ? fmtDate(p.createdAt) : 'Только что';
     div.innerHTML = `
       <div class="page-icon" style="background:${color}">${letter}</div>
       <div class="page-info">
@@ -596,14 +631,14 @@ newPageName.addEventListener('keydown', e => { if (e.key === 'Enter') createPage
 function createPage() {
   const name = newPageName.value.trim();
   if (!name || !db) return;
-  db.collection('pages').add({
+  getPagesRef().add({
     name: name,
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   }).then(() => {
     newPageOverlay.classList.remove('show');
   }).catch(err => {
     console.error('Create page error:', err);
-    alert('Ошибка создания страницы');
+    alert('Ошибка создания страницы. Проверьте правила Firebase Rules.');
   });
 }
 
@@ -631,17 +666,19 @@ function selectPage(pageId, pageName) {
   messagesWrap.innerHTML = '';
   let prevCount = 0;
 
-  messagesUnsub = db.collection('pages').doc(pageId)
-    .collection('messages').orderBy('createdAt', 'asc')
-    .onSnapshot(snap => {
+  messagesUnsub = getMessagesRef(pageId).onSnapshot(snap => {
       const wasBottom = messagesWrap.scrollTop + messagesWrap.clientHeight >= messagesWrap.scrollHeight - 80;
       messagesWrap.innerHTML = '';
 
+      let msgs = [];
+      snap.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+      
+      // Сортировка в памяти
+      msgs.sort((a, b) => getTs(a) - getTs(b));
+
       let lastDateStr = null;
-      snap.forEach(doc => {
-        const d = doc.data();
+      msgs.forEach(d => {
         const ts = d.createdAt?.toDate?.() || null;
-        // Разделитель по дате
         if (ts) {
           const ds = ts.toDateString();
           if (ds !== lastDateStr) {
@@ -652,10 +689,10 @@ function selectPage(pageId, pageName) {
             messagesWrap.appendChild(sep);
           }
         }
-        messagesWrap.appendChild(buildMessage(doc.id, d));
+        messagesWrap.appendChild(buildMessage(d.id, d));
       });
 
-      const newCount = snap.size;
+      const newCount = msgs.length;
       if (wasBottom || newCount > prevCount) {
         setTimeout(() => { messagesWrap.scrollTop = messagesWrap.scrollHeight; }, 30);
       }
@@ -731,7 +768,6 @@ window.vpToggle = function(id) {
   const time = wrap.querySelector('.vp-time');
 
   if (audio.paused) {
-    // Останавливаем все остальные
     document.querySelectorAll('.voice-player audio').forEach(a => {
       if (a !== audio && !a.paused) { a.pause(); a.currentTime = 0; }
     });
@@ -775,7 +811,7 @@ window.startEdit = function(msgId, isCaption) {
   editingIsCaption = isCaption;
 
   if (!currentPageId) return;
-  db.collection('pages').doc(currentPageId).collection('messages').doc(msgId).get().then(doc => {
+  getMessagesRef(currentPageId).doc(msgId).get().then(doc => {
     if (!doc.exists) return;
     const d = doc.data();
     editText.value = isCaption ? (d.caption || '') : (d.content || '');
@@ -793,7 +829,7 @@ function saveEdit() {
   if (!editingMsgId || !currentPageId) return;
   const val = editText.value.trim();
   const field = editingIsCaption ? 'caption' : 'content';
-  db.collection('pages').doc(currentPageId).collection('messages').doc(editingMsgId).update({
+  getMessagesRef(currentPageId).doc(editingMsgId).update({
     [field]: val,
     edited: true,
     editedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -812,7 +848,7 @@ function sendMessage() {
   const text = msgInput.value.trim();
   if (!text || !currentPageId || !db) return;
 
-  db.collection('pages').doc(currentPageId).collection('messages').add({
+  getMessagesRef(currentPageId).add({
     type: 'text',
     content: text,
     authorId: currentUser.id,
@@ -855,7 +891,7 @@ async function handleFiles(e) {
     try {
       if (file.type.startsWith('image/')) {
         const b64 = await compressImage(file);
-        await db.collection('pages').doc(currentPageId).collection('messages').add({
+        await getMessagesRef(currentPageId).add({
           type: 'image',
           content: b64,
           caption: '',
@@ -871,7 +907,7 @@ async function handleFiles(e) {
           continue;
         }
         const b64 = await readFileAsBase64(file);
-        await db.collection('pages').doc(currentPageId).collection('messages').add({
+        await getMessagesRef(currentPageId).add({
           type: 'video',
           content: b64,
           caption: '',
@@ -984,7 +1020,7 @@ async function sendVoice() {
       return;
     }
     try {
-      await db.collection('pages').doc(currentPageId).collection('messages').add({
+      await getMessagesRef(currentPageId).add({
         type: 'voice',
         content: b64,
         duration: recordingSeconds,
@@ -1019,26 +1055,28 @@ document.addEventListener('keydown', e => {
 // ════════════════════════════════════════
 // ИНИЦИАЛИЗАЦИЯ
 // ════════════════════════════════════════
-(function init() {
+async function startApp() {
   loadTheme();
 
   if (loadProfile()) {
     showProfileUI();
     app.style.display = 'flex';
     avatarPreview.src = currentUser.avatar;
-    initFirestore();
+    await authFirebaseAndInit();
   } else {
     avatarPreview.src = makeDefaultAvatar('User');
     profileOverlay.classList.add('show');
   }
 
   // Проверка конфига
-  if (!firebaseConfig.apiKey) {
+  if (!fbConfig.apiKey) {
     setTimeout(() => {
       alert('⚠️ Настройте Firebase!\n\nВставьте свои ключи в переменную firebaseConfig в начале <script>.');
     }, 500);
   }
-})();
+}
+
+startApp();
 </script>
 </body>
 </html>
