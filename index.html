@@ -547,13 +547,17 @@ themeBtn.addEventListener('click', () => {
 // FIREBASE AUTH & FIRESTORE
 // ════════════════════════════════════════
 async function authFirebaseAndInit() {
-  if (!auth) return;
+  if (!auth) {
+    initFirestore();
+    return;
+  }
   try {
     await auth.signInAnonymously();
-    initFirestore();
   } catch(e) {
-    console.error('Auth error', e);
+    console.error('Auth error (скорее всего анонимный вход отключен в консоли):', e);
   }
+  // Инициализируем БД в любом случае, даже если авторизация не прошла!
+  initFirestore();
 }
 
 function initFirestore() {
@@ -620,7 +624,7 @@ function createPage() {
     newPageOverlay.classList.remove('show');
   }).catch(err => {
     console.error('Create page error:', err);
-    alert('Ошибка создания страницы. Проверьте правила Firebase Rules.');
+    alert('Ошибка Firebase: ' + err.message + '\n\nБратан, у тебя закрыты правила базы! Зайди в Firebase -> Firestore Database -> Rules и поставь:\nallow read, write: if true;');
   });
 }
 
@@ -838,7 +842,10 @@ function sendMessage() {
     authorAvatar: currentUser.avatar,
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     edited: false
-  }).catch(err => console.error('Send error:', err));
+  }).catch(err => {
+    console.error('Send error:', err);
+    alert('Ошибка отправки: ' + err.message);
+  });
 
   msgInput.value = '';
   msgInput.style.height = '40px';
