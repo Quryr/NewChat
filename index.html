@@ -275,8 +275,8 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
 </div>
 
 <!-- ═══ FIREBASE SDK ═══ -->
+<!-- ПОЛНОСТЬЮ ВЫРЕЗАЛ АВТОРИЗАЦИЮ, КАК БЫЛО В САМОМ НАЧАЛЕ -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script>
@@ -292,11 +292,11 @@ const fbConfig = {
 };
 
 // ── ИНИЦИАЛИЗАЦИЯ ──
-let db, auth;
+let db;
 try {
   firebase.initializeApp(fbConfig);
   db = firebase.firestore();
-  auth = firebase.auth();
+  // Эта строка спасет твои данные из кэша:
   db.enablePersistence().catch(() => {});
 } catch(e) {
   console.error('Firebase init error:', e);
@@ -523,7 +523,7 @@ profSave.addEventListener('click', async () => {
   showProfileUI();
   app.style.display = 'flex';
   
-  await authFirebaseAndInit();
+  initFirestore();
 });
 
 // ════════════════════════════════════════
@@ -544,24 +544,8 @@ themeBtn.addEventListener('click', () => {
 });
 
 // ════════════════════════════════════════
-// FIREBASE AUTH & FIRESTORE
+// FIRESTORE
 // ════════════════════════════════════════
-async function authFirebaseAndInit() {
-  if (auth) {
-    try {
-      // БРАТАН! Вот та самая команда спасения.
-      // Выходим из анонимного аккаунта, чтобы стать "Неизвестным",
-      // которым ты был, когда создавал чаты.
-      await auth.signOut();
-      console.log("Успешно вышли из аккаунта. Возвращаем старые чаты...");
-    } catch(e) {
-      console.error('Ошибка при выходе:', e);
-    }
-  }
-  
-  // Инициализируем БД
-  initFirestore();
-}
 
 function initFirestore() {
   if (!db) return;
@@ -1054,7 +1038,7 @@ async function startApp() {
     showProfileUI();
     app.style.display = 'flex';
     avatarPreview.src = currentUser.avatar;
-    await authFirebaseAndInit();
+    initFirestore();
   } else {
     avatarPreview.src = makeDefaultAvatar('User');
     profileOverlay.classList.add('show');
