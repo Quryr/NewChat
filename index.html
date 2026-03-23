@@ -280,7 +280,7 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script>
-// ЖЕСТКАЯ ПРИВЯЗКА К ТВОЕЙ БАЗЕ (Больше никаких перескоков на тестовые сервера)
+// ЖЕСТКАЯ ПРИВЯЗКА К ТВОЕЙ БАЗЕ
 const fbConfig = {
   apiKey: "AIzaSyCDrk4TEP8u8U03tUzVY--67ZS8RVCblGQ",
   authDomain: "newchat-9a7e6.firebaseapp.com",
@@ -547,16 +547,19 @@ themeBtn.addEventListener('click', () => {
 // FIREBASE AUTH & FIRESTORE
 // ════════════════════════════════════════
 async function authFirebaseAndInit() {
-  if (!auth) {
-    initFirestore();
-    return;
+  if (auth) {
+    try {
+      // БРАТАН! Вот та самая команда спасения.
+      // Выходим из анонимного аккаунта, чтобы стать "Неизвестным",
+      // которым ты был, когда создавал чаты.
+      await auth.signOut();
+      console.log("Успешно вышли из аккаунта. Возвращаем старые чаты...");
+    } catch(e) {
+      console.error('Ошибка при выходе:', e);
+    }
   }
-  try {
-    await auth.signInAnonymously();
-  } catch(e) {
-    console.error('Auth error (скорее всего анонимный вход отключен в консоли):', e);
-  }
-  // Инициализируем БД в любом случае, даже если авторизация не прошла!
+  
+  // Инициализируем БД
   initFirestore();
 }
 
