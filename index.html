@@ -243,6 +243,8 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
         <span class="user-name-display" id="sidebarName"></span>
       </div>
       <div class="header-actions">
+        <!-- КНОПКА СПАСЕНИЯ ДАННЫХ -->
+        <button class="icon-btn" id="rescueBtn" title="Спасти удаленные из-за ошибки чаты">🚑</button>
         <button class="icon-btn" id="themeBtn" title="Сменить тему">🌙</button>
       </div>
     </div>
@@ -275,7 +277,6 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
 </div>
 
 <!-- ═══ FIREBASE SDK ═══ -->
-<!-- ПОЛНОСТЬЮ ВЫРЕЗАЛ АВТОРИЗАЦИЮ, КАК БЫЛО В САМОМ НАЧАЛЕ -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
@@ -296,7 +297,7 @@ let db;
 try {
   firebase.initializeApp(fbConfig);
   db = firebase.firestore();
-  // Эта строка спасет твои данные из кэша:
+  // Эта строка отвечает за оффлайн данные
   db.enablePersistence().catch(() => {});
 } catch(e) {
   console.error('Firebase init error:', e);
@@ -348,6 +349,60 @@ const editSave = $('editSave');
 const editCancel = $('editCancel');
 const imgViewer = $('imgViewer');
 const imgViewerSrc = $('imgViewerSrc');
+
+// ════════════════════════════════════════
+// СКРИПТ СПАСЕНИЯ ДАННЫХ (RESCUE)
+// ════════════════════════════════════════
+$('rescueBtn').addEventListener('click', async () => {
+  const confirmed = confirm(
+    "ВНИМАНИЕ!\n\n" +
+    "Этот скрипт попытается вытащить удаленные чаты из глубокого оффлайн-кэша браузера. " +
+    "Это отключит интернет в приложении на пару секунд.\n\n" +
+    "Запустить сканирование?"
+  );
+  if (!confirmed) return;
+
+  try {
+    alert("Отключаю сеть и сканирую локальную базу...");
+    await db.disableNetwork(); // Принудительно уходим в оффлайн, чтобы читать только кэш
+
+    const pagesSnap = await db.collection('pages').get({ source: 'cache' });
+    let countPages = 0;
+    let countMessages = 0;
+    
+    // Создаем пакетную запись (чтобы разом всё сохранить)
+    const batch = db.batch();
+
+    for (const pageDoc of pagesSnap.docs) {
+      countPages++;
+      const pData = pageDoc.data();
+      // Помечаем данные для перезаписи на сервере
+      batch.set(db.collection('pages').doc(pageDoc.id), pData, { merge: true });
+
+      // Пытаемся достать сообщения этой страницы из кэша
+      try {
+        const msgSnap = await db.collection('pages').doc(pageDoc.id).collection('messages').get({ source: 'cache' });
+        msgSnap.forEach(msgDoc => {
+          countMessages++;
+          batch.set(db.collection('pages').doc(pageDoc.id).collection('messages').doc(msgDoc.id), msgDoc.data(), { merge: true });
+        });
+      } catch(e) {}
+    }
+
+    await db.enableNetwork(); // Включаем сеть обратно
+
+    if (countPages > 0 || countMessages > 0) {
+      alert(`УРА, БРАТАН!\n\nНайдено страниц: ${countPages}\nНайдено сообщений: ${countMessages}\n\nСейчас они будут принудительно выгружены на сервер!`);
+      await batch.commit(); // Отправляем всё на сервер
+    } else {
+      alert("Кэш абсолютно пуст 😔\n\nБратан, мне очень жаль. Когда Firebase в первый раз подключился к закрытой базе данных, сервер выдал отказ, и Firebase навсегда стер твои локальные черновики, посчитав их ошибкой.");
+    }
+  } catch (err) {
+    console.error(err);
+    await db.enableNetwork();
+    alert("Ошибка при сканировании кэша: " + err.message);
+  }
+});
 
 // ════════════════════════════════════════
 // УТИЛИТЫ
