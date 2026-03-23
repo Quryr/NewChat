@@ -280,9 +280,8 @@ textarea.msg-input::placeholder{color:var(--placeholder)}
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script>
-// Умный выбор конфига (Превью Canvas vs Твой сервер)
-const isCanvas = typeof __firebase_config !== 'undefined';
-const fbConfig = isCanvas ? JSON.parse(__firebase_config) : {
+// ЖЕСТКАЯ ПРИВЯЗКА К ТВОЕЙ БАЗЕ (Больше никаких перескоков на тестовые сервера)
+const fbConfig = {
   apiKey: "AIzaSyCDrk4TEP8u8U03tUzVY--67ZS8RVCblGQ",
   authDomain: "newchat-9a7e6.firebaseapp.com",
   projectId: "newchat-9a7e6",
@@ -291,7 +290,6 @@ const fbConfig = isCanvas ? JSON.parse(__firebase_config) : {
   appId: "1:22906415162:web:97f2fb81bcf38ec0996d03",
   measurementId: "G-WNSMWYL6T9"
 };
-const envAppId = typeof __app_id !== 'undefined' ? __app_id : 'exam-prep-app';
 
 // ── ИНИЦИАЛИЗАЦИЯ ──
 let db, auth;
@@ -302,18 +300,6 @@ try {
   db.enablePersistence().catch(() => {});
 } catch(e) {
   console.error('Firebase init error:', e);
-}
-
-// Умные роуты (позволяют работать в Canvas, но сохраняют твои старые чаты на твоем сервере)
-function getPagesRef() {
-  return isCanvas 
-    ? db.collection('artifacts').doc(envAppId).collection('public').doc('data').collection('pages')
-    : db.collection('pages');
-}
-function getMessagesRef(pageId) {
-  return isCanvas
-    ? getPagesRef().doc(pageId).collection('messages')
-    : db.collection('pages').doc(pageId).collection('messages');
 }
 
 // ── СОСТОЯНИЕ ПРИЛОЖЕНИЯ ──
@@ -563,11 +549,7 @@ themeBtn.addEventListener('click', () => {
 async function authFirebaseAndInit() {
   if (!auth) return;
   try {
-    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-      await auth.signInWithCustomToken(__initial_auth_token);
-    } else {
-      await auth.signInAnonymously();
-    }
+    await auth.signInAnonymously();
     initFirestore();
   } catch(e) {
     console.error('Auth error', e);
@@ -576,8 +558,8 @@ async function authFirebaseAndInit() {
 
 function initFirestore() {
   if (!db) return;
-  // Слушаем список страниц (сортировка в памяти для безопасности)
-  getPagesRef().onSnapshot(snap => {
+  // Слушаем список страниц из ТВОЕЙ базы 'pages'
+  db.collection('pages').onSnapshot(snap => {
     allPages = [];
     snap.forEach(doc => {
       allPages.push({ id: doc.id, ...doc.data() });
@@ -631,7 +613,7 @@ newPageName.addEventListener('keydown', e => { if (e.key === 'Enter') createPage
 function createPage() {
   const name = newPageName.value.trim();
   if (!name || !db) return;
-  getPagesRef().add({
+  db.collection('pages').add({
     name: name,
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   }).then(() => {
@@ -666,7 +648,7 @@ function selectPage(pageId, pageName) {
   messagesWrap.innerHTML = '';
   let prevCount = 0;
 
-  messagesUnsub = getMessagesRef(pageId).onSnapshot(snap => {
+  messagesUnsub = db.collection('pages').doc(pageId).collection('messages').onSnapshot(snap => {
       const wasBottom = messagesWrap.scrollTop + messagesWrap.clientHeight >= messagesWrap.scrollHeight - 80;
       messagesWrap.innerHTML = '';
 
@@ -811,7 +793,7 @@ window.startEdit = function(msgId, isCaption) {
   editingIsCaption = isCaption;
 
   if (!currentPageId) return;
-  getMessagesRef(currentPageId).doc(msgId).get().then(doc => {
+  db.collection('pages').doc(currentPageId).collection('messages').doc(msgId).get().then(doc => {
     if (!doc.exists) return;
     const d = doc.data();
     editText.value = isCaption ? (d.caption || '') : (d.content || '');
@@ -829,7 +811,7 @@ function saveEdit() {
   if (!editingMsgId || !currentPageId) return;
   const val = editText.value.trim();
   const field = editingIsCaption ? 'caption' : 'content';
-  getMessagesRef(currentPageId).doc(editingMsgId).update({
+  db.collection('pages').doc(currentPageId).collection('messages').doc(editingMsgId).update({
     [field]: val,
     edited: true,
     editedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -848,7 +830,7 @@ function sendMessage() {
   const text = msgInput.value.trim();
   if (!text || !currentPageId || !db) return;
 
-  getMessagesRef(currentPageId).add({
+  db.collection('pages').doc(currentPageId).collection('messages').add({
     type: 'text',
     content: text,
     authorId: currentUser.id,
@@ -891,7 +873,7 @@ async function handleFiles(e) {
     try {
       if (file.type.startsWith('image/')) {
         const b64 = await compressImage(file);
-        await getMessagesRef(currentPageId).add({
+        await db.collection('pages').doc(currentPageId).collection('messages').add({
           type: 'image',
           content: b64,
           caption: '',
@@ -907,7 +889,7 @@ async function handleFiles(e) {
           continue;
         }
         const b64 = await readFileAsBase64(file);
-        await getMessagesRef(currentPageId).add({
+        await db.collection('pages').doc(currentPageId).collection('messages').add({
           type: 'video',
           content: b64,
           caption: '',
@@ -1020,7 +1002,7 @@ async function sendVoice() {
       return;
     }
     try {
-      await getMessagesRef(currentPageId).add({
+      await db.collection('pages').doc(currentPageId).collection('messages').add({
         type: 'voice',
         content: b64,
         duration: recordingSeconds,
